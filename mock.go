@@ -3,6 +3,7 @@ package exdns
 import (
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,18 +65,18 @@ func (m *DNSMock) AddTXTRecord(strings ...string) *DNSMock {
 	return m
 }
 
-func (m *DNSMock) AddNSRecord(nsName string) *DNSMock {
+func (m *DNSMock) AddNSRecord(fqdn, nsName string) *DNSMock {
 	ns := &dns.NS{
-		Hdr: dns.RR_Header{Name: m.settings.DNSZoneFQDN, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 0},
+		Hdr: dns.RR_Header{Name: fqdn, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 0},
 		Ns:  nsName,
 	}
 	m.records[dns.TypeNS] = append(m.records[dns.TypeNS], ns)
 	return m
 }
 
-func (m *DNSMock) AddARecord(ip net.IP) *DNSMock {
+func (m *DNSMock) AddARecord(fqdn string, ip net.IP) *DNSMock {
 	rr := &dns.A{
-		Hdr: dns.RR_Header{Name: m.settings.DNSZoneFQDN, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0},
+		Hdr: dns.RR_Header{Name: fqdn, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0},
 		A:   ip.To4(),
 	}
 	m.records[dns.TypeA] = append(m.records[dns.TypeA], rr)
@@ -145,30 +146,37 @@ func (m *DNSMock) serve(done <-chan interface{}, protocols ...string) <-chan err
 }
 
 func (m *DNSMock) handleReflect(w dns.ResponseWriter, r *dns.Msg) {
-	var (
-		v4 bool
-		a  net.IP
-	)
+	//var (
+	//	v4 bool
+	//	a  net.IP
+	//)
 	msg := new(dns.Msg)
 	msg.SetReply(r)
 	msg.Compress = false
-	if ip, ok := w.RemoteAddr().(*net.UDPAddr); ok {
-		a = ip.IP
-		v4 = a.To4() != nil
-	}
-	if ip, ok := w.RemoteAddr().(*net.TCPAddr); ok {
-		a = ip.IP
-		v4 = a.To4() != nil
-	}
-
-	if v4 {
-		m.AddARecord(a)
-	} else {
-		m.AddAAAARecord(a)
-	}
+	//if ip, ok := w.RemoteAddr().(*net.UDPAddr); ok {
+	//	a = ip.IP
+	//	v4 = a.To4() != nil
+	//}
+	//if ip, ok := w.RemoteAddr().(*net.TCPAddr); ok {
+	//	a = ip.IP
+	//	v4 = a.To4() != nil
+	//}
+	//
+	//if v4 {
+	//	m.AddARecord(m.settings.DNSZoneFQDN,a)
+	//} else {
+	//	m.AddAAAARecord(a)
+	//}
 
 	if m.records[r.Question[0].Qtype] != nil {
 		for _, rr := range m.records[r.Question[0].Qtype] {
+			switch r.Question[0].Qtype {
+			case dns.TypeA, dns.TypeAAAA:
+				fqdn := strings.Split(rr.String(), "\t")[0]
+				if fqdn != r.Question[0].Name {
+					continue
+				}
+			}
 			msg.Answer = append(msg.Answer, rr)
 			//msg.Extra = append(msg.Extra, rr)
 		}
