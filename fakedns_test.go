@@ -1,13 +1,13 @@
 package exdns
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +23,7 @@ var testSettings = FakeDNSSettings{
 }
 
 func TestFakeDNS(t *testing.T) {
-	err := NewFakeDNS(t, testSettings).
+	NewFakeDNS(testSettings).
 		AddNSRecord("blah.cloud.example.com.", "gslb-ns-us-cloud.example.com.").
 		AddNSRecord("blah.cloud.example.com.", "gslb-ns-uk-cloud.example.com.").
 		AddNSRecord("blah.cloud.example.com.", "gslb-ns-eu-cloud.example.com.").
@@ -38,14 +38,13 @@ func TestFakeDNS(t *testing.T) {
 			a, err := dns.Exchange(g, fmt.Sprintf("%s:%v", server, port))
 			require.NoError(t, err)
 			require.NotEmpty(t, a.Answer)
-		})
-	assert.NoError(t, err)
+		}).RequireNoError(t)
 }
 
 // TestFakeN runs DNSFake several 10 times
 func TestFakeDNSRepeatable(t *testing.T) {
 	for i := 1; i < 10; i++ {
-		NewFakeDNS(t, testSettings).
+		NewFakeDNS(testSettings).
 			AddARecord("localtargets-roundrobin.cloud.example.com.", net.IPv4(10, 1, 0, 3)).
 			AddARecord("localtargets-roundrobin.cloud.example.com.", net.IPv4(10, 1, 0, 2)).
 			AddARecord("localtargets-roundrobin.cloud.example.com.", net.IPv4(10, 1, 0, 1)).
@@ -63,7 +62,7 @@ func TestFakeDNSRepeatable(t *testing.T) {
 					require.Equal(t, 3, len(a.Answer))
 					time.Sleep(5 * time.Millisecond)
 				}
-			})
+			}).RequireNoError(t)
 	}
 }
 
@@ -71,10 +70,10 @@ func TestFakeDNSPortIsAlreadyInUse(t *testing.T) {
 	s := &dns.Server{Addr: fmt.Sprintf("[::]:%v", port), Net: "udp", TsigSecret: nil, ReusePort: false}
 	go func() { _ = s.ListenAndServe() }()
 	time.Sleep(100 * time.Millisecond)
-	err := NewFakeDNS(t, testSettings).
+	err := NewFakeDNS(testSettings).
 		Start().
 		RunTestFunc(func() {
-			fmt.Println("doing something...")
-		})
-	assert.Error(t, err)
+			require.NoError(t,errors.New("this code will not be executed"))
+		}).Error
+	require.Error(t, err)
 }

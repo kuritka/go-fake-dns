@@ -2,6 +2,7 @@ package exdns
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"net"
 	"strings"
 	"testing"
@@ -24,18 +25,20 @@ type DNSMock struct {
 	settings       FakeDNSSettings
 	records        map[uint16][]dns.RR
 	server         *dns.Server
-	t              *testing.T
 	err            error
 }
 
-func NewFakeDNS(t *testing.T, settings FakeDNSSettings) *DNSMock {
+type Result struct{
+	Error error
+}
+
+func NewFakeDNS(settings FakeDNSSettings) *DNSMock {
 	return &DNSMock{
 		settings:       settings,
 		readinessProbe: make(chan interface{}),
 		done:           make(chan interface{}),
 		records:        make(map[uint16][]dns.RR),
 		server:         &dns.Server{Addr: fmt.Sprintf("[::]:%v", settings.Port), Net: "udp", TsigSecret: nil, ReusePort: false},
-		t:              t,
 	}
 }
 
@@ -48,12 +51,18 @@ func (m *DNSMock) Start() *DNSMock {
 	return m
 }
 
-func (m *DNSMock) RunTestFunc(f func()) error {
-	if m.err != nil {
+func (m *DNSMock) RunTestFunc(f func()) *Result {
+	if m.err == nil {
 		f()
 		m.err = m.server.Shutdown()
 	}
-	return m.err
+	return &Result{
+		Error: m.err,
+	}
+}
+
+func (r *Result) RequireNoError(t *testing.T) {
+	require.NoError(t, r.Error)
 }
 
 func (m *DNSMock) AddTXTRecord(fqdn string, strings ...string) *DNSMock {
@@ -115,7 +124,6 @@ func (m *DNSMock) startReadinessProbe() {
 		}
 		return
 	}
-	// waiting too long, close listening
 	close(m.done)
 }
 
