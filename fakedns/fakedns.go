@@ -1,18 +1,19 @@
-package exdns
+package fakedns
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"net"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/miekg/dns"
 )
 
 type FakeDNSSettings struct {
-	Port            int
+	FakeDNSPort     int
 	EdgeDNSZoneFQDN string
 	DNSZoneFQDN     string
 }
@@ -20,15 +21,14 @@ type FakeDNSSettings struct {
 // DNSMock acts as DNS server but returns mock values
 type DNSMock struct {
 	// readinessProbe is the channel that is released when the dns server starts listening
-	readinessProbe chan interface{}
-	done           chan interface{}
+	readinessProbe  chan interface{}
 	settings       FakeDNSSettings
 	records        map[uint16][]dns.RR
 	server         *dns.Server
 	err            error
 }
 
-type Result struct{
+type Result struct {
 	Error error
 }
 
@@ -36,18 +36,18 @@ func NewFakeDNS(settings FakeDNSSettings) *DNSMock {
 	return &DNSMock{
 		settings:       settings,
 		readinessProbe: make(chan interface{}),
-		done:           make(chan interface{}),
 		records:        make(map[uint16][]dns.RR),
-		server:         &dns.Server{Addr: fmt.Sprintf("[::]:%v", settings.Port), Net: "udp", TsigSecret: nil, ReusePort: false},
+		server:         &dns.Server{Addr: fmt.Sprintf("[::]:%v", settings.FakeDNSPort), Net: "udp", TsigSecret: nil, ReusePort: false},
 	}
 }
 
 func (m *DNSMock) Start() *DNSMock {
+	go m.startReadinessProbe()
 	go func() {
 		m.err = m.listen()
 	}()
 	<-m.readinessProbe
-	fmt.Printf("FakeDNS listening on port %v \n", m.settings.Port)
+	fmt.Printf("FakeDNS listening on port %v \n", m.settings.FakeDNSPort)
 	return m
 }
 
@@ -105,7 +105,7 @@ func (m *DNSMock) listen() (err error) {
 	dns.HandleFunc(m.settings.EdgeDNSZoneFQDN, m.handleReflect)
 	for e := range m.serve() {
 		if e != nil {
-			err = fmt.Errorf("%s%s", err, e)
+			err = fmt.Errorf("%s", e)
 		}
 	}
 	return
@@ -115,7 +115,7 @@ func (m *DNSMock) startReadinessProbe() {
 	defer close(m.readinessProbe)
 	for i := 0; i < 5; i++ {
 		g := new(dns.Msg)
-		host := fmt.Sprintf("localhost:%v", m.settings.Port)
+		host := fmt.Sprintf("localhost:%v", m.settings.FakeDNSPort)
 		g.SetQuestion(m.settings.DNSZoneFQDN, dns.TypeA)
 		_, err := dns.Exchange(g, host)
 		if err != nil {
@@ -124,7 +124,6 @@ func (m *DNSMock) startReadinessProbe() {
 		}
 		return
 	}
-	close(m.done)
 }
 
 func (m *DNSMock) serve() <-chan error {
@@ -132,12 +131,9 @@ func (m *DNSMock) serve() <-chan error {
 	go func() {
 		defer close(errors)
 		var err error
-		go m.startReadinessProbe()
 		if err = m.server.ListenAndServe(); err != nil {
-			errors <- fmt.Errorf("failed to setup the server: %s\n", err.Error())
-			close(m.done)
+			errors <- fmt.Errorf("failed to setup the server: %s", err.Error())
 		}
-		<- m.done
 	}()
 	return errors
 }
@@ -148,15 +144,11 @@ func (m *DNSMock) handleReflect(w dns.ResponseWriter, r *dns.Msg) {
 	msg.Compress = false
 	if m.records[r.Question[0].Qtype] != nil {
 		for _, rr := range m.records[r.Question[0].Qtype] {
-			switch r.Question[0].Qtype {
-			case dns.TypeA, dns.TypeAAAA:
-				fqdn := strings.Split(rr.String(), "\t")[0]
-				if fqdn != r.Question[0].Name {
-					continue
-				}
+			fqdn := strings.Split(rr.String(), "\t")[0]
+			if fqdn == r.Question[0].Name {
+				msg.Answer = append(msg.Answer, rr)
+				// msg.Extra = append(msg.Extra, rr)
 			}
-			msg.Answer = append(msg.Answer, rr)
-			//msg.Extra = append(msg.Extra, rr)
 		}
 	}
 	_ = w.WriteMsg(msg)

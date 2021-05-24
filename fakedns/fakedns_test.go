@@ -1,4 +1,4 @@
-package exdns
+package fakedns
 
 import (
 	"errors"
@@ -13,13 +13,46 @@ import (
 
 const (
 	server = "localhost"
-	port   = 7753
+	port   = 7053
 )
 
 var testSettings = FakeDNSSettings{
-	Port:            port,
+	FakeDNSPort:     port,
 	EdgeDNSZoneFQDN: "example.com.",
 	DNSZoneFQDN:     "cloud.example.com.",
+}
+
+func TestFakeDNSMultipleTXTRecords(t *testing.T) {
+	NewFakeDNS(testSettings).
+		AddTXTRecord("heartbeat-us.cloud.example.com.", "1").
+		AddTXTRecord("heartbeat-uk.cloud.example.com.", "2").
+		AddTXTRecord("heartbeat-eu.cloud.example.com.", "0", "6", "8").
+		Start().
+		RunTestFunc(func() {
+			g := new(dns.Msg)
+			g.SetQuestion("ip.blah.cloud.example.com.", dns.TypeTXT)
+			a, err := dns.Exchange(g, fmt.Sprintf("%s:%v", server, port))
+			require.NoError(t, err)
+			require.Empty(t, a.Answer)
+
+			g = new(dns.Msg)
+			g.SetQuestion("heartbeat-uk.cloud.example.com.", dns.TypeTXT)
+			a, err = dns.Exchange(g, fmt.Sprintf("%s:%v", server, port))
+			require.NoError(t, err)
+			require.Len(t, a.Answer, 1)
+			require.Len(t, a.Answer[0].(*dns.TXT).Txt, 1)
+			require.Equal(t, "2", a.Answer[0].(*dns.TXT).Txt[0])
+
+			g = new(dns.Msg)
+			g.SetQuestion("heartbeat-eu.cloud.example.com.", dns.TypeTXT)
+			a, err = dns.Exchange(g, fmt.Sprintf("%s:%v", server, port))
+			require.NoError(t, err)
+			require.Len(t, a.Answer, 1)
+			require.Len(t, a.Answer[0].(*dns.TXT).Txt, 3)
+			require.Equal(t, "0", a.Answer[0].(*dns.TXT).Txt[0])
+			require.Equal(t, "6", a.Answer[0].(*dns.TXT).Txt[1])
+			require.Equal(t, "8", a.Answer[0].(*dns.TXT).Txt[2])
+		}).RequireNoError(t)
 }
 
 func TestFakeDNS(t *testing.T) {
@@ -34,7 +67,6 @@ func TestFakeDNS(t *testing.T) {
 		RunTestFunc(func() {
 			g := new(dns.Msg)
 			g.SetQuestion("ip.blah.cloud.example.com.", dns.TypeA)
-			//g.SetQuestion("blah.cloud.example.com.", dns.TypeNS)
 			a, err := dns.Exchange(g, fmt.Sprintf("%s:%v", server, port))
 			require.NoError(t, err)
 			require.NotEmpty(t, a.Answer)
@@ -68,12 +100,13 @@ func TestFakeDNSRepeatable(t *testing.T) {
 
 func TestFakeDNSPortIsAlreadyInUse(t *testing.T) {
 	s := &dns.Server{Addr: fmt.Sprintf("[::]:%v", port), Net: "udp", TsigSecret: nil, ReusePort: false}
+	defer func() { _ = s.Shutdown() }()
 	go func() { _ = s.ListenAndServe() }()
 	time.Sleep(100 * time.Millisecond)
 	err := NewFakeDNS(testSettings).
 		Start().
 		RunTestFunc(func() {
-			require.NoError(t,errors.New("this code will not be executed"))
+			require.NoError(t, errors.New("this code will not be executed"))
 		}).Error
 	require.Error(t, err)
 }
