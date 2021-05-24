@@ -10,8 +10,8 @@ import (
 	"github.com/miekg/dns"
 )
 
-type DNSFakeSettings struct {
-	Port int
+type FakeDNSSettings struct {
+	Port            int
 	EdgeDNSZoneFQDN string
 	DNSZoneFQDN     string
 }
@@ -20,19 +20,19 @@ type DNSFakeSettings struct {
 type DNSMock struct {
 	// readinessProbe is the channel that is released when the dns server starts listening
 	readinessProbe chan interface{}
-	done chan interface{}
-	settings       DNSFakeSettings
+	done           chan interface{}
+	settings       FakeDNSSettings
 	records        map[uint16][]dns.RR
 	server         *dns.Server
 	t              *testing.T
-	err 			error
+	err            error
 }
 
-func NewDNSFake(t *testing.T, settings DNSFakeSettings) *DNSMock {
+func NewFakeDNS(t *testing.T, settings FakeDNSSettings) *DNSMock {
 	return &DNSMock{
 		settings:       settings,
 		readinessProbe: make(chan interface{}),
-		done: 			make(chan interface{}),
+		done:           make(chan interface{}),
 		records:        make(map[uint16][]dns.RR),
 		server:         &dns.Server{Addr: fmt.Sprintf("[::]:%v", settings.Port), Net: "udp", TsigSecret: nil, ReusePort: false},
 		t:              t,
@@ -129,10 +129,7 @@ func (m *DNSMock) serve() <-chan error {
 			errors <- fmt.Errorf("failed to setup the server: %s\n", err.Error())
 			close(m.done)
 		}
-		select {
-		case <-m.done:
-			return
-		}
+		<- m.done
 	}()
 	return errors
 }
